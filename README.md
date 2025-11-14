@@ -1,6 +1,6 @@
 # fretboard
 
-Fretboard Explorer Tool
+Fretboard Explorer Tool.
 
 This is a simple browser-based tool for visualising notes, scales, chords and intervals across a guitar fretboard. It runs entirely in the browser and requires no installation.
 
