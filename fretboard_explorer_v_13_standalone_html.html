@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fretboard & Scale Explorer</title>
+  <style>
+    :root{
+      --labels-w: 88px;
+      --rows: 6;            /* strings (updated dynamically) */
+      --frets: 12;          /* fixed for Fretboard tab */
+      --board-radius: 16px;
+      --note-size: clamp(20px, 4.6vmin, 36px);
+      --note-font: clamp(11px, 1.8vmin, 15px);
+      --board-height: clamp(260px, 34vh, 440px);
+      --fretline: 2px;
+      --nut: 6px;
+      --metal-1: #d7dee6;
+      --metal-2: #aab4bf;
+      --panel: #0f1116;
+      --panel-2: #171923;
+      --board-bg: #151515;  
+      --edge-h: 26px;       /* side-dot strip height */
+      --open-gutter: calc(var(--note-size) + 18px);
+      --tab-accent: #3d78ff;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{ margin:0; color:#e9eef9; background: radial-gradient(1200px 500px at 50% -200px,#1b1f2a,#0c0d12), #0c0d12; font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Noto Color Emoji, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+    .app{max-width:1500px; margin: clamp(10px,3vmin,24px) auto; padding: 0 14px 40px}
+
+    /* Tabs */
+    .tabs{ display:flex; gap:8px; margin: 10px 0 12px; }
+    .tab-btn{ padding:10px 14px; border:1px solid #2a2e3a; background:#111523; border-radius:999px; font-weight:800; cursor:pointer; user-select:none; }
+    .tab-btn.active{ border-color: var(--tab-accent); box-shadow: 0 0 0 3px rgba(61,120,255,.15); }
+
+    header.controls{ background: linear-gradient(180deg,var(--panel),var(--panel-2)); border: 1px solid #232633; border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03); display:grid; gap:14px; padding: 14px; align-items:end; grid-template-columns: repeat(6,minmax(160px,1fr)); }
+    header.controls h1{grid-column: 1/-1; font-size: clamp(18px,2.2vmin,24px); margin: 4px 0 2px; letter-spacing:.2px}
+    h3{font-size: clamp(18px,2.2vmin,24px); margin: 6px 0 2px; letter-spacing:.2px}
+
+    label{display:block; font-size:.85em; margin-bottom:6px; opacity:.85}
+    select, button, input[type="text"], input[type="number"]{ width:100%; appearance:none; color:#e9eef9; background:#121420; border:1px solid #2a2e3a; border-radius:10px; padding:10px 12px; outline:none; box-shadow: inset 0 1px 0 rgba(255,255,255,.03); }
+    select:focus, button:focus, input:focus{border-color:#3d78ff; box-shadow:0 0 0 3px rgba(61,120,255,.15), inset 0 1px 0 rgba(255,255,255,.05)}
+    button.toggle{ cursor:pointer; font-weight:700; text-align:center }
+
+    .row{display:flex; gap:10px; align-items:center}
+
+    .fretboard-shell{ margin-top:16px; background: linear-gradient(180deg, #0f1116, #0b0d12); border: 1px solid #222532; border-radius: 16px; padding: 12px; padding-bottom: calc(var(--edge-h) + 30px); box-shadow: 0 20px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.02); }
+    .wrap{ display:grid; grid-template-columns: minmax(900px,1fr); gap: 12px; align-items:stretch; }
+
+    .labels{ display:grid; grid-template-rows: repeat(var(--rows), 1fr); height: var(--board-height); align-content:stretch; justify-items:stretch; padding: 0 0 0 6px; }
+    .labels .string-tag{ display:flex; align-items:center; justify-content:center; width: 100%; height: 100%; text-align:center; border-radius:10px; background: linear-gradient(180deg,#141828,#0f121d); border:1px solid #252a3a; box-shadow: inset 0 1px 0 rgba(255,255,255,.03); font-weight:800; cursor:pointer; position:relative; }
+    .labels .string-tag:after{ content:""; position:absolute; inset:0; border-radius:10px; box-shadow: inset 0 0 0 3px rgba(0,0,0,.4); pointer-events:none; }
+    .labels .string-tag.in-scale{ filter:saturate(1.05); box-shadow: inset 0 0 0 3px rgba(255,255,255,.06); }
+    .labels .string-tag.dim{ opacity:.35; filter:saturate(.6) }
+    .labels .string-tag.pulse::before{ content:""; position:absolute; inset:-6px; border-radius:12px; border:3px solid var(--pulse-color, #66d4a2); animation: pulseGlow 1.8s ease-out infinite; pointer-events:none; z-index:3; }
+    .labels .string-tag:after{ content:""; position:absolute; inset:0; border-radius:10px; box-shadow: inset 0 0 0 3px rgba(0,0,0,.4); pointer-events:none; }
+    .labels .string-tag.dim{ opacity:.35; filter:saturate(.6) }
+
+    .board{ position:relative; border-radius: var(--board-radius); overflow:hidden; height: calc(var(--board-height) * (var(--rows) / 6)); background: var(--board-bg); background: var(--board-bg); }
+
+    .frets, .strings, .nut, .markers, .open{ position:absolute; }
+    .frets, .strings, .nut, .markers{ left: var(--open-gutter); right:0; top:0; bottom:0; }
+    .open{ left:0; width: var(--open-gutter); top:0; bottom:0; }
+    .edge{ position: relative; margin-top:12px; height: var(--edge-h); border-top: 1px solid #202435; margin-left: var(--open-gutter); width: calc(100% - var(--open-gutter)); }
+
+    .fretline{ position:absolute; top:0; bottom:0; width:var(--fretline); background: linear-gradient(180deg,var(--metal-2),var(--metal-1) 45%, var(--metal-2)); box-shadow: 0 0 0 1px rgba(12,12,14,.25), inset 0 0 0 1px rgba(255,255,255,.2); transform:translateX(-50%); pointer-events:none; }
+    .nut{ width:var(--nut); left: var(--open-gutter); right:auto; background: linear-gradient(180deg,#dedede,#f4f4f4); box-shadow: 2px 0 3px rgba(0,0,0,.35); z-index: 3; pointer-events:none }
+
+    .strings .string{ position:absolute; left:0; right:0; height:2px; background: linear-gradient(180deg,#bfc9d7,#8c97a7); filter: drop-shadow(0 1px 1px rgba(0,0,0,.55)); opacity:.95; pointer-events:none; }
+    .strings .s1{ height: 3.8px}
+    .strings .s2{ height: 3.4px}
+    .strings .s3{ height: 3.0px}
+    .strings .s4{ height: 2.7px}
+    .strings .s5{ height: 2.4px}
+    .strings .s6{ height: 2.2px}
+    .strings .s7{ height: 2.0px}
+    .strings .s8{ height: 1.8px}
+
+    /* Notes - light style only */
+    .note{ position:absolute; transform: translate(-50%, -50%); display:grid; place-items:center; width: var(--note-size); height: var(--note-size); border-radius: 999px; background: linear-gradient(180deg,#f5f7ff,#e6e9f5); border: 1px solid #c7ccdc; font-weight:800; font-size: var(--note-font); color:#111318; user-select:none; cursor:default; z-index: 5; box-shadow: 0 2px 4px rgba(0,0,0,.25); --ring-color: rgba(0,0,0,.46); }
+    .note:after{ content:""; position:absolute; inset:0; border-radius:999px; box-shadow: inset 0 0 0 3px var(--ring-color); pointer-events:none; }
+
+    /* Edge dots (side markers) */
+    .edge-dot{ width:10px; height:10px; border-radius:999px; background: radial-gradient(circle at 40% 35%, #ffffffc0, #888 60%, #444 100%); filter: drop-shadow(0 1px 1px rgba(0,0,0,.5)); }
+    .edge-wrap{ position:absolute; transform: translate(-50%, -50%); top: 50%; display:flex; justify-content:center; align-items:center; gap:10px; }
+
+    .block{ margin-top: 18px; background: linear-gradient(180deg,#0f1116,#0b0d12); border:1px solid #232633; border-radius:12px; padding:14px; }
+    .chips{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-top:10px }
+    .chip{ display:flex; align-items:center; justify-content:center; height:44px; padding:0 10px; border:1px solid #2a2e3a; background:#111523; border-radius:10px; font-weight:800; cursor:pointer; user-select:none; font-size:.95rem; text-align:center }
+    .chip.active{ outline:2px solid #4a9cff; outline-offset:2px }
+    .chip.ghost{ opacity:.1; border-style:dashed; cursor:default }
+    .chip-matrix{ display:grid; grid-template-columns: repeat(var(--cols,7), minmax(150px, 1fr)); gap:10px; margin-top:10px }
+    .chip-col{ display:grid; grid-auto-rows:44px; gap:10px }
+    .chip.active{ outline:2px solid #4a9cff; outline-offset:2px }
+
+    /* Swatches */
+    .swatches{ display:flex; gap:10px; flex-wrap:wrap }
+    .swatch{ position:relative; display:grid; gap:6px; place-items:center; padding:12px 10px; border-radius:10px; border:1px solid #2a2e3a; background:#111523; user-select:none; font-weight:700; width:150px; }
+    .swatch .name{ font-size:.95rem; opacity:.9 }
+    .swatch .interval{ font-size:.85rem; opacity:.7 }
+    .color-select{ width:100%; background:#0f1322; border:1px solid #272d3a; border-radius:8px; padding:8px; font-weight:700; }
+    .color-select[data-color="1"]{ color:#111; background: var(--sel-color); }
+
+    /* Pulse glow */
+    @keyframes pulseGlow {
+      0%   { transform: scale(0.95); opacity: .85; box-shadow: 0 0 10px 3px var(--pulse-alpha, rgba(102,212,162,.35)); }
+      60%  { transform: scale(1.15); opacity: .22; box-shadow: 0 0 26px 12px var(--pulse-alpha, rgba(102,212,162,.35)); }
+      100% { transform: scale(1.02); opacity: 0; box-shadow: 0 0 0 0 var(--pulse-alpha, rgba(102,212,162,.35)); }
+    }
+    .note.pulse::before, .open-badge.pulse::before{
+      content:""; position:absolute; inset:-6px; border-radius:999px; border:3px solid var(--pulse-color, #66d4a2);
+      animation: pulseGlow 1.8s ease-out infinite; pointer-events:none;
+    }
+
+    /* SCALE EXPLORER: equal-spaced frets */
+    .scale-wrap{ display:grid; grid-template-columns: minmax(900px,1fr); gap: 12px; align-items:stretch; }
+    .scale-board{ position:relative; border-radius: var(--board-radius); overflow:hidden; height: calc(var(--board-height) * (var(--rows) / 6)); background: var(--board-bg); background: var(--board-bg); }
+    .scale-frets, .scale-strings, .scale-markers{ position:absolute; left:0; right:0; top:0; bottom:0; }
+    .scale-fretline{ position:absolute; top:0; bottom:0; width:var(--fretline); background: linear-gradient(180deg,var(--metal-2),var(--metal-1) 45%, var(--metal-2)); transform:translateX(-50%); }
+    .scale-start-label{ margin-top:8px; opacity:.8; font-weight:700 }
+  .note.off{ opacity:.28; filter: grayscale(.8) }
+    .circle{ position:relative; width:min(520px, 70vw); aspect-ratio:1; margin: 8px auto; }
+    .circle .note{ position:absolute; cursor:pointer; }
+  /* Error overlay */
+    #errbox{position:fixed;left:12px;bottom:12px;right:12px;max-height:40vh;overflow:auto;background:#1b1e2b;color:#ffb3b3;border:1px solid #4b1e1e;border-radius:8px;padding:10px;z-index:99999;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="tabs">
+      <button class="tab-btn active" id="tabFretBtn">Fretboard Explorer</button>
+      <button class="tab-btn" id="tabScaleBtn">Scale Explorer</button>
+      <button class="tab-btn" id="tabChordBtn">Custom Scale</button>
+    </div>
+
+    <!-- FRETBOARD TAB -->
+    <section id="tabFret" class="tab-section">
+      <header class="controls" aria-label="Fretboard Controls">
+        <h1>Fretboard Explorer</h1>
+
+        <div>
+          <label for="instrument">Instrument</label>
+          <select id="instrument">
+            <option>Guitar — 6-string (E A D G B E)</option>
+            <option>Guitar — 7-string (B E A D G B E)</option>
+            <option>Guitar — 8-string (F# B E A D G B E)</option>
+            <option>Bass — 4-string (E A D G)</option>
+            <option>Bass — 5-string (B E A D G)</option>
+            <option>Bass — 6-string (B E A D G C)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="preset">Preset Tuning</label>
+          <select id="preset"></select>
+        </div>
+
+        <div>
+          <label for="transpose">Transpose (↓)</label>
+          <div class="row">
+            <button id="tMinus" class="toggle" style="max-width:60px">−</button>
+            <div class="val" id="tVal">0</div>
+            <button id="tPlus" class="toggle" style="max-width:60px">+</button>
+          </div>
+        </div>
+
+        <div>
+          <label for="key">Key</label>
+          <select id="key"></select>
+        </div>
+
+        <div>
+          <label for="scale">Scale</label>
+          <div class="row">
+            <select id="scale"></select>
+            <label class="row" style="gap:6px;align-items:center;margin:0"><input type="checkbox" id="customScaleToggle1"> Custom scale</label>
+          </div>
+        </div>
+
+        <div>
+          <label for="displayMode">Labels</label>
+          <button id="displayMode" class="toggle">Show Intervals</button>
+        </div>
+      </header>
+
+      <section class="fretboard-shell">
+        <div class="wrap">
+          <div style="position:relative">
+            <div class="board" id="boardFret">
+              <div class="open" id="openGutter"></div>
+              <div class="nut" aria-hidden="true"></div>
+              <div class="frets" id="fretsOverlay" aria-hidden="true"></div>
+              <div class="strings" id="stringsOverlay" aria-hidden="true"></div>
+              <div class="markers" id="markers"></div>
+            </div>
+            <div class="edge" id="edge"></div>
+          </div>
+        </div>
+
+        <div class="block" aria-label="Chord highlight">
+          <div class="row">
+            <h3 style="margin:0">Chords in key</h3>
+            <div style="flex:1"></div>
+            <label class="row" style="gap:6px;align-items:center;margin:0"><input type="checkbox" id="toggleSus"> Suspended</label>
+            <label class="row" style="gap:6px;align-items:center;margin:0"><input type="checkbox" id="togglePower"> Power</label>
+            <button id="clearHighlight" class="toggle" style="max-width:160px">Clear highlight</button>
+          </div>
+          <div id="chipMatrix" class="chip-matrix"></div>
+        </div>
+
+        <div class="block" aria-label="Note colour palette">
+          <h3>Pick colours for scale degrees (Shift-click to clear).</h3>
+          <div id="swatches" class="swatches"></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- SCALE EXPLORER TAB -->
+    <section id="tabScale" class="tab-section" style="display:none">
+      <header class="controls" aria-label="Scale Explorer Controls">
+        <h1>Scale Explorer</h1>
+        <div>
+          <label for="key2">Key</label>
+          <select id="key2"></select>
+        </div>
+        <div>
+          <label for="scale2">Scale</label>
+          <div class="row">
+            <select id="scale2"></select>
+            <label class="row" style="gap:6px;align-items:center;margin:0"><input type="checkbox" id="customScaleToggle2"> Custom scale</label>
+          </div>
+        </div>
+        <div>
+          <label>Shape</label>
+          <div class="row">
+            <button id="shapePrev" class="toggle" style="max-width:80px">◀</button>
+            <div id="shapeLabel" style="min-width:120px;text-align:center;font-weight:800">Shape 1</div>
+            <button id="shapeNext" class="toggle" style="max-width:80px">▶</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="fretboard-shell">
+        <div class="scale-wrap">
+          <div>
+            <div class="scale-board" id="boardScale">
+              <div class="scale-strings" id="strings2"></div>
+              <div class="scale-frets" id="frets2"></div>
+              <div class="scale-markers" id="markers2"></div>
+            </div>
+            <div class="scale-start-label" id="startFretLabel"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="block" aria-label="Scale note colour palette">
+        <h3>Pick colours for scale degrees (Shift-click to clear).</h3>
+        <div id="swatches2" class="swatches"></div>
+      </div>
+    </section>
+
+    <!-- CHORD EXPLORER TAB -->
+    <section id="tabChord" class="tab-section" style="display:none">
+      <header class="controls" aria-label="Custom Scale Controls">
+        <h1>Custom Scale</h1>
+        <div>
+          <label for="key3">Key</label>
+          <select id="key3"></select>
+        </div>
+        <div>
+          <label>Editor</label>
+          <div class="row" style="align-items:center;opacity:.85">Click the circles to toggle intervals. Root (R) is fixed at the top.</div>
+        </div>
+      </header>
+
+      <section class="fretboard-shell">
+        <div class="circle" id="customCircle"></div>
+      </section>
+
+      <div class="block" aria-label="Custom scale note colour palette">
+        <h3>Pick colours for scale degrees (Shift-click to clear).</h3>
+        <div id="swatches3" class="swatches"></div>
+      </div>
+    </section>
+<script>
+// ==========================
+// Clean rebuild of the script
+// Global error catcher to surface issues in-page
+window.addEventListener('error', (e)=>{
+  try{
+    const box=document.getElementById('errbox')||(()=>{const p=document.createElement('pre');p.id='errbox';document.body.appendChild(p);return p;})();
+    box.textContent = `Error: ${e.message}
+${e.filename||''}:${e.lineno||''}:${e.colno||''}`;
+  }catch(_){}
+});
+// ==========================
+
+// ---- Pitch data ----
+const NOTE_INDEX = {'C':0,'B#':0,'C#':1,'Db':1,'D':2,'D#':3,'Eb':3,'E':4,'Fb':4,'F':5,'E#':5,'F#':6,'Gb':6,'G':7,'G#':8,'Ab':8,'A':9,'A#':10,'Bb':10,'B':11,'Cb':11};
+const NATURALS = ['C','D','E','F','G','A','B'];
+const N_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const N_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+const ALL_KEYS = ['C','C#','Db','D','D#','Eb','E','F','F#','Gb','G','G#','Ab','A','A#','Bb','B','Cb'];
+
+// ---- Scales (grouped + ordered) ----
+const SCALE_GROUPS = [
+  {
+    name: 'Major & Modes',
+    items: [
+      ['Major (Ionian)',                [2,2,1,2,2,2,1]],
+      ['Dorian',                        [2,1,2,2,2,1,2]],
+      ['Phrygian',                      [1,2,2,2,1,2,2]],
+      ['Lydian',                        [2,2,2,1,2,2,1]],
+      ['Mixolydian',                    [2,2,1,2,2,1,2]],
+      ['Natural Minor (Aeolian)',       [2,1,2,2,1,2,2]],
+      ['Locrian',                       [1,2,2,1,2,2,2]],
+    ]
+  },
+  {
+    name: 'Harmonic Minor & Modes',
+    items: [
+      ['Harmonic Minor',                [2,1,2,2,1,3,1]],
+      ['Locrian ♮6',                    [1,2,2,1,3,1,2]],
+      ['Ionian ♯5',                     [2,2,1,3,1,2,1]],
+      ['Dorian ♯4 (Ukrainian Dorian)',  [2,1,3,1,2,1,2]],
+      ['Phrygian Dominant',             [1,3,1,2,1,2,2]],
+      ['Lydian ♯2',                     [3,1,2,1,2,2,1]],
+      ['Super Locrian (bb7)',           [1,2,1,2,2,1,3]],
+    ]
+  },
+  {
+    name: 'Melodic Minor (Jazz) & Modes',
+    items: [
+      ['Melodic Minor (Asc)',           [2,1,2,2,2,2,1]],
+      ['Dorian ♭2',                     [1,2,2,2,2,1,2]],
+      ['Lydian Augmented (♯5)',         [2,2,2,2,1,2,1]],
+      ['Lydian Dominant (♭7)',          [2,2,2,1,2,1,2]],
+      ['Mixolydian ♭6 (Aeolian Dom.)',  [2,2,1,2,1,2,2]],
+      ['Locrian ♮2',                    [2,1,2,1,2,2,2]],
+      ['Altered (Super Locrian)',       [1,2,1,2,2,2,2]],
+    ]
+  },
+  {
+    name: 'Harmonic Major & Modes',
+    items: [
+      ['Harmonic Major (Ionian ♭6)',    [2,2,1,2,1,3,1]],
+      ['Dorian ♭5 (HM Mode 2)',         [2,1,2,1,3,1,2]],
+      ['Phrygian ♮3 (HM Mode 3)',       [1,2,1,3,1,2,2]],
+      ['Lydian ♭3 (HM Mode 4)',         [2,1,3,1,2,2,1]],
+      ['Mixolydian ♭2 (HM Mode 5)',     [1,3,1,2,2,1,2]],
+      ['Lydian Augmented ♯2 (HM M6)',   [3,1,2,2,1,2,1]],
+      ['Locrian ♭♭7 (HM Mode 7)',       [1,2,2,1,2,1,3]],
+    ]
+  },
+  {
+    name: 'Neapolitan Scales',
+    items: [
+      ['Neapolitan Major',              [1,3,1,2,2,2,1]],
+      ['Neapolitan Minor',              [1,2,2,2,1,2,2]],
+    ]
+  },
+  {
+    name: 'Pentatonic & Blues',
+    items: [
+      ['Major Pentatonic',              [2,2,3,2,3]],
+      ['Minor Pentatonic',              [3,2,2,3,2]],
+      ['Major Blues (Hexatonic)',       [2,1,1,3,2,3]],
+      ['Minor Blues (Hexatonic)',       [3,2,1,1,3,2]],
+    ]
+  },
+  {
+    name: 'Bebop Scales',
+    items: [
+      ['Bebop Major',                   [2,2,1,2,1,1,2,1]],
+      ['Bebop Dominant',                [2,2,1,2,2,1,1,1]],
+    ]
+  },
+  {
+    name: 'Symmetric & Other',
+    items: [
+      ['Whole Tone',                    [2,2,2,2,2,2]],
+      ['Diminished (Whole–Half)',       [2,1,2,1,2,1,2,1]],
+      ['Diminished (Half–Whole)',       [1,2,1,2,1,2,1,2]],
+      ['Double Harmonic Major (Byzantine)', [1,3,1,2,1,3,1]],
+      ['Hungarian Minor',               [2,1,3,1,1,3,1]],
+    ]
+  }
+];
+
+// Flat map for spellings
+const SCALES = (()=>{ const m={}; for(const g of SCALE_GROUPS){ for(const [name,steps] of g.items){ m[name]=steps; } } return m; })();
+
+function buildScaleOptionsHTML(){
+  return SCALE_GROUPS.map(g=>`<optgroup label="${g.name}">`+
+    g.items.map(([name])=>`<option value="${name}">${name}</option>`).join('')+
+  `</optgroup>`).join('');
+}
+
+const INSTRUMENTS = {
+  'Guitar — 6-string (E A D G B E)': ['E','A','D','G','B','E'],
+  'Guitar — 7-string (B E A D G B E)': ['B','E','A','D','G','B','E'],
+  'Guitar — 8-string (F# B E A D G B E)': ['F#','B','E','A','D','G','B','E'],
+  'Bass — 4-string (E A D G)': ['E','A','D','G'],
+  'Bass — 5-string (B E A D G)': ['B','E','A','D','G'],
+  'Bass — 6-string (B E A D G C)': ['B','E','A','D','G','C']
+};
+
+const PRESETS = {
+  'Guitar — 6-string (E A D G B E)': {
+    'Standard E': ['E','A','D','G','B','E'],
+    'Drop D':     ['D','A','D','G','B','E'],
+    'Open D':     ['D','A','D','F#','A','D'],
+    'Open G':     ['D','G','D','G','B','D'],
+    'Open E':     ['E','B','E','G#','B','E'],
+    'Open C':     ['C','G','C','G','C','E']
+  },
+  'Guitar — 7-string (B E A D G B E)': {
+    'Standard B': ['B','E','A','D','G','B','E'],
+    'Drop A':     ['A','E','A','D','G','B','E']
+  },
+  'Guitar — 8-string (F# B E A D G B E)': {
+    'Standard F#': ['F#','B','E','A','D','G','B','E']
+  },
+  'Bass — 4-string (E A D G)': {
+    'Standard E': ['E','A','D','G'],
+    'Drop D':     ['D','A','D','G']
+  },
+  'Bass — 5-string (B E A D G)': {
+    'Standard B': ['B','E','A','D','G'],
+    'Drop A':     ['A','E','A','D','G']
+  },
+  'Bass — 6-string (B E A D G C)': {
+    'Standard B': ['B','E','A','D','G','C']
+  }
+};
+
+const SIDE_DOT_FRETS = [3,5,7,9,12,15,17,19];
+const HILITE_COL = { R: '#66d4a2', third:'#2ad1c2', fifth:'#64cfff', seventh:'#5a95ff' };
+
+// ---- App state ----
+const state = {
+  key: 'C',
+  scaleName: 'Major (Ionian)',
+  rows: 6,
+  frets: 12,
+  baseTuning: INSTRUMENTS['Guitar — 6-string (E A D G B E)'].slice(),
+  transpose: 0,
+  highlightSet: null,
+  chordRootIdx: null,
+  intervalColorMap: { 'R': '#66d4a2' },
+  noteColors: Array(12).fill(null),
+  showIntervals: false,
+  pulseIntervals: { 'R': true },
+  // custom scale
+  customScaleActive: false,
+  customSemis: [0,2,4,5,7,9,11],
+  // scale explorer
+  shapeIndex: 0
+};
+
+// ---- Utilities ----
+const el = id => document.getElementById(id);
+function normalizeNote(s){ if(!s) return null; s=String(s).trim().replace(/♯/g,'#').replace(/♭/g,'b'); const m=s.match(/^([A-Ga-g])([#b])?$/); if(!m) return null; const note=m[1].toUpperCase()+(m[2]||''); return (note in NOTE_INDEX)? note : null; }
+const idxOf = note => NOTE_INDEX[note];
+function preferSharpsForKey(key){ if(key.includes('b')) return false; if(key.includes('#')) return true; const flats=new Set(['F','Bb','Eb','Ab','Db','Gb','Cb']); return !flats.has(key); }
+function diatonicLetterSeq(tonic){ const t=tonic[0]; const i=NATURALS.indexOf(t); const out=[]; for(let k=0;k<7;k++) out.push(NATURALS[(i+k)%7]); return out; }
+function intervalLabel(rootIdx, noteIdx){ const d=(noteIdx-rootIdx+12)%12; return ['R','b2','M2','b3','M3','P4','#4','P5','b6','M6','b7','M7'][d]; }
+function buildWeights(n){ const ratio=0.94; const w=[]; for(let i=0;i<n;i++) w.push(Math.pow(ratio,i)); const sum=w.reduce((a,b)=>a+b,0); return w.map(x=>x/sum); }
+function cumulativePositions(weights){ const out=[]; let acc=0; for(let i=0;i<weights.length;i++){ acc+=weights[i]; out.push(acc); } return out; }
+function shade(hex,pct){ if(!/^#([0-9a-f]{6})$/i.test(hex)) return hex; const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255; const f=(100+pct)/100; r=Math.min(255,Math.max(0,Math.round(r*f))); g=Math.min(255,Math.max(0,Math.round(g*f))); b=Math.min(255,Math.max(0,Math.round(b*f))); return '#' + ((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
+function hexA(hex,a){ if(!/^#([0-9a-f]{6})$/i.test(hex)) return `rgba(102,212,162,${a})`; const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return `rgba(${r},${g},${b},${a})`; }
+
+// ---- Key spelling & palette ----
+function spelledScale(tonic, scaleName){
+  const preferSharps = preferSharpsForKey(tonic);
+  let semis;
+  if(state.customScaleActive){
+    const s = new Set([0, ...state.customSemis.map(n=>((n%12)+12)%12)]);
+    semis = Array.from(s).sort((a,b)=>a-b);
+  } else {
+    const steps = SCALES[scaleName] || [2,2,1,2,2,2,1];
+    semis=[0]; let acc=0; for(const st of steps){ acc=(acc+st)%12; if(!semis.includes(acc)) semis.push(acc); }
+  }
+  const letters = diatonicLetterSeq(tonic);
+  const rootIdx = idxOf(tonic);
+  const names = semis.map((d,i)=>{ const target=(rootIdx+d)%12; const letter=letters[i%letters.length]; const s=N_SHARP[target], f=N_FLAT[target]; const ok=n=>n[0]===letter; if(ok(s)) return s; if(ok(f)) return f; return preferSharps ? s : f; });
+  const noteIdxs = semis.map(d=> (rootIdx+d)%12);
+  const set = new Set(noteIdxs);
+  return { names, noteIdxs, set };
+}
+function chooseSpelling(noteIdx){ const { names } = spelledScale(state.key, state.scaleName); const s=N_SHARP[noteIdx], f=N_FLAT[noteIdx]; if(names.includes(s)) return s; if(names.includes(f)) return f; const preferSharps = preferSharpsForKey(state.key); return preferSharps ? s : f; }
+function setDefaultPalette(){
+  const rootIdx = idxOf(state.key);
+  const map = state.intervalColorMap || { 'R':'#66d4a2' };
+  state.noteColors = Array(12).fill(null);
+  const sc = spelledScale(state.key, state.scaleName);
+  sc.noteIdxs.forEach(idx=>{ const lab=intervalLabel(rootIdx, idx); const col=map[lab]||null; if(col) state.noteColors[idx]=col; });
+}
+
+// ---- Tuning helpers ----
+function getOpenIdx(row){ const base = idxOf(state.baseTuning[row]); return (base - (state.transpose % 12) + 12) % 12; }
+function getOpenNameDisplay(row){ const idx = getOpenIdx(row); return chooseSpelling(idx); }
+
+// ---- small DOM drawing helpers (deduped) ----
+function drawStringsAt(container, rows){
+  if(!container) return; container.innerHTML='';
+  for(let r=0;r<rows;r++){
+    const s=document.createElement('div'); s.className='string s'+(Math.min(r+1,8));
+    const ri=(rows-1-r); const y=((ri+0.5)/rows)*100;
+    s.style.position='absolute'; s.style.left='0'; s.style.right='0'; s.style.top=y+'%';
+    s.style.height='2px'; s.style.background='linear-gradient(180deg,#bfc9d7,#8c97a7)';
+    container.appendChild(s);
+  }
+}
+function drawEqualFretsAt(container, count){
+  if(!container) return; container.innerHTML='';
+  for(let i=0;i<count;i++){
+    const x=((i+1)/count)*100; const line=document.createElement('div');
+    line.className='scale-fretline'; line.style.left=x+'%'; container.appendChild(line);
+  }
+}
+function drawWeightedFretsAt(container, ends){
+  if(!container) return; container.innerHTML='';
+  for(let i=0;i<ends.length;i++){
+    const x=ends[i]*100; const div=document.createElement('div');
+    div.className='fretline'; div.style.left=x+'%'; container.appendChild(div);
+  }
+}
+
+// ========== FRETBOARD TAB ==========
+function renderLabels(){
+  const wrap = el('labels'); if(!wrap) return; wrap.innerHTML='';
+  const sc = spelledScale(state.key, state.scaleName);
+  const rootIdx = idxOf(state.key);
+  const pulseIdx = (state.chordRootIdx!==null ? state.chordRootIdx : rootIdx);
+  for(let r=state.rows-1;r>=0;r--){
+    const pc = getOpenIdx(r);
+    const tag = document.createElement('div'); tag.className='string-tag'; tag.textContent = getOpenNameDisplay(r);
+    const fill = state.noteColors[pc];
+    if(fill){ tag.style.background = `linear-gradient(180deg, ${fill}, ${shade(fill,-8)})`; tag.style.borderColor = shade(fill,-25); tag.style.color = '#111318'; }
+    if(sc.set.has(pc)){
+      tag.classList.add('in-scale');
+    } else {
+      tag.classList.add('dim');
+    }
+    if(state.highlightSet && !state.highlightSet.has(pc)) tag.classList.add('dim');
+    // pulse on root or chord root, only if in current visible highlight context
+    if(sc.set.has(pc) && (!state.highlightSet || state.highlightSet.has(pc)) && state.pulseIntervals[intervalLabel(rootIdx, pc)]){
+      tag.classList.add('pulse');
+      const pcol = state.noteColors[pc] || HILITE_COL.R;
+      tag.style.setProperty('--pulse-color', pcol);
+      tag.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+    }
+    tag.addEventListener('click', ()=>{
+      const val = prompt('Set open string note (A–G with # or b):', chooseSpelling(pc));
+      const nn = normalizeNote(val);
+      if(nn){ const storeIdx = (idxOf(nn)+state.transpose)%12; const next = state.baseTuning.slice(); next[r]=N_SHARP[storeIdx]; state.baseTuning=next; renderEverything(); renderScaleEverything(); }
+    });
+    wrap.appendChild(tag);
+  }
+}
+
+function renderBoardFret(){
+  const markers = el('markers'), fretsOverlay = el('fretsOverlay'), stringsOverlay = el('stringsOverlay'), openGutter = el('openGutter'), edge = el('edge');
+  if(!markers || !fretsOverlay || !stringsOverlay || !openGutter || !edge) return;
+  markers.innerHTML=''; fretsOverlay.innerHTML=''; stringsOverlay.innerHTML=''; openGutter.innerHTML=''; edge.innerHTML='';
+
+  // Strings (low string at bottom)
+  drawStringsAt(stringsOverlay, state.rows);
+
+  // Realistic fret spacing
+  const weights = buildWeights(state.frets);
+  const ends = cumulativePositions(weights);
+  drawWeightedFretsAt(fretsOverlay, ends);
+
+  // Scale + pulse context
+  const sc = spelledScale(state.key, state.scaleName);
+  const rootIdx = idxOf(state.key);
+  const pulseIdx = (state.chordRootIdx!==null ? state.chordRootIdx : rootIdx);
+
+  // Fretted notes (centred within each fret) — per string
+  for(let r=0; r<state.rows; r++){
+    const openIdx = getOpenIdx(r);
+    const ri=(state.rows-1-r);
+    const oy=((ri+0.5)/state.rows)*100;
+    // ---- Open note (fret 0) rendered as a normal .note ----
+    (function(){
+      const noteIdx = openIdx;
+      const cx = 50; // center of open gutter
+      const note = document.createElement('div');
+      note.className='note';
+      note.style.left = cx + '%';
+      note.style.top = oy + '%';
+      note.textContent = state.showIntervals ? intervalLabel(rootIdx,noteIdx) : chooseSpelling(noteIdx);
+      const col = state.noteColors[noteIdx];
+      if(col){
+        note.classList.add('recol');
+        note.style.background = `linear-gradient(180deg, ${col}, ${shade(col,-8)})`;
+        note.style.borderColor = shade(col,-25);
+        note.style.color = '#111318';
+        note.style.setProperty('--ring-color', shade(col,-40));
+      }
+      if(state.highlightSet && !state.highlightSet.has(noteIdx)){
+        note.style.opacity = '0.22';
+        note.style.filter = 'grayscale(0.5)';
+      }
+      if(sc.set.has(noteIdx) && (!state.highlightSet || state.highlightSet.has(noteIdx)) && state.pulseIntervals[intervalLabel(rootIdx,noteIdx)]){
+        note.classList.add('pulse');
+        const pcol = state.noteColors[noteIdx] || HILITE_COL.R;
+        note.style.setProperty('--pulse-color', pcol);
+        note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+      }
+      if(!sc.set.has(noteIdx)){
+        note.style.opacity = '0.28';
+        note.style.filter = 'grayscale(0.8)';
+      }
+      note.style.cursor = 'pointer';
+      note.title = 'Click to retune open string';
+      note.addEventListener('click', ()=>{
+        const val = prompt('Set open string note (A–G with # or b):', chooseSpelling(openIdx));
+        const nn = normalizeNote(val);
+        if(nn){
+          const storeIdx = (idxOf(nn)+state.transpose)%12;
+          const next = state.baseTuning.slice();
+          next[r] = N_SHARP[storeIdx];
+          state.baseTuning = next;
+          renderEverything(); renderScaleEverything(); renderChordEverything();
+        }
+      });
+      openGutter.appendChild(note);
+    })();
+    for(let f=1; f<=state.frets; f++){
+      const noteIdx=(openIdx+f)%12;
+      if(!sc.set.has(noteIdx)) continue;
+      const lp=f>1?ends[f-2]:0, ln=ends[f-1];
+      const cx=((lp+ln)/2)*100;
+
+      const note=document.createElement('div');
+      note.className='note';
+      note.style.left=cx+'%';
+      note.style.top=oy+'%';
+      note.textContent = state.showIntervals ? intervalLabel(rootIdx,noteIdx) : chooseSpelling(noteIdx);
+
+      const col = state.noteColors[noteIdx];
+      if(col){
+        note.classList.add('recol');
+        note.style.background=`linear-gradient(180deg, ${col}, ${shade(col,-8)})`;
+        note.style.borderColor=shade(col,-25);
+        note.style.color='#111318';
+        note.style.setProperty('--ring-color', shade(col,-40));
+      }
+      if(state.highlightSet && !state.highlightSet.has(noteIdx)){
+        note.style.opacity='0.22';
+        note.style.filter='grayscale(0.5)';
+      }
+      if((!state.highlightSet || state.highlightSet.has(noteIdx)) && state.pulseIntervals[intervalLabel(rootIdx,noteIdx)]){
+        note.classList.add('pulse');
+        const pcol = state.noteColors[noteIdx] || HILITE_COL.R;
+        note.style.setProperty('--pulse-color', pcol);
+        note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+      }
+      markers.appendChild(note);
+    }
+  }
+
+  // Side dots under the board (3,5,7,9,12 double, ...)
+  SIDE_DOT_FRETS.filter(n=>n<=state.frets).forEach(n=>{
+    const lp=n>1?ends[n-2]:0, ln=ends[Math.min(n-1,state.frets-1)];
+    const cx=((lp+ln)/2)*100;
+    if(n===12){
+      const wrap=document.createElement('div');
+      wrap.className='edge-wrap';
+      wrap.style.left=cx+'%';
+      wrap.innerHTML='<div class="edge-dot"></div><div class="edge-dot"></div>';
+      edge.appendChild(wrap);
+    } else {
+      const dot=document.createElement('div');
+      dot.className='edge-dot';
+      dot.style.position='absolute';
+      dot.style.left=cx+'%';
+      dot.style.top='50%';
+      dot.style.transform='translate(-50%, -50%)';
+      edge.appendChild(dot);
+    }
+  });
+}
+
+// ========== SCALE EXPLORER (functions) ==========
+function shapeStep(){ return (/Pentatonic|Blues/i.test(state.scaleName)) ? 2 : 3; }
+function buildShapePositions(){
+  const sc = spelledScale(state.key, state.scaleName);
+  const L=sc.noteIdxs.length;
+  const step = shapeStep();
+  const stringsDeg = [];
+  for(let s=0; s<state.rows; s++){
+    const start = (state.shapeIndex + s*step) % L;
+    const degs = Array.from({length:step}, (_,k)=> (start + k) % L);
+    stringsDeg.push(degs);
+  }
+  const stringData = [];
+  let minF=Infinity, maxF=-Infinity;
+  const lowRow = 0; // low string index
+  const lowOpen = getOpenIdx(lowRow);
+  const lowTargetIdx = sc.noteIdxs[state.shapeIndex % L];
+  let f0=0; while(((lowOpen+f0)%12)!==lowTargetIdx && f0<48) f0++;
+  let lastAnchor = f0;
+  for(let s=0; s<state.rows; s++){
+    const openIdx = getOpenIdx(s);
+    let prevF = (s===0? f0 : lastAnchor);
+    const notes=[];
+    for(const d of stringsDeg[s]){
+      const target = sc.noteIdxs[d];
+      let bestF=null, bestDist=1e9;
+      for(let delta=-5; delta<=5; delta++){
+        const f = prevF + delta; if(f<0) continue; if(((openIdx+f)%12)===target){ const dist=Math.abs(delta); if(dist<bestDist){ bestDist=dist; bestF=f; if(dist===0) break; } }
+      }
+      if(bestF===null){ let f=prevF; while(((openIdx+f)%12)!==target && f<60) f++; bestF=f; }
+      notes.push({fret:bestF, idx:target, degree:d});
+      prevF = bestF;
+      minF=Math.min(minF,bestF); maxF=Math.max(maxF,bestF);
+    }
+    stringData.push({ openIdx, notes });
+    lastAnchor = notes[0]?.fret ?? lastAnchor;
+  }
+  if(!isFinite(minF)) { minF=0; maxF=1; }
+  return { stringData, minF, maxF, L };
+}
+function renderBoardScale(){
+  const { stringData, minF, maxF } = buildShapePositions();
+  const needed = Math.max(1, maxF - minF + 1);
+  const strings = el('strings2'); const frets = el('frets2'); const markers = el('markers2');
+  if(!strings) return; strings.innerHTML=''; frets.innerHTML=''; markers.innerHTML='';
+  drawStringsAt(strings, state.rows);
+  drawEqualFretsAt(frets, needed);
+  const rootIdx = idxOf(state.key);
+  stringData.forEach((sd, sIdx)=>{
+    const oy = (((state.rows-1 - sIdx)+0.5)/state.rows)*100;
+    sd.notes.forEach(n=>{
+      const cx = ((n.fret - minF + 0.5)/needed)*100;
+      const note=document.createElement('div'); note.className='note'; note.style.left=cx+'%'; note.style.top=oy+'%';
+      note.textContent = state.showIntervals ? intervalLabel(rootIdx,n.idx) : chooseSpelling(n.idx);
+      const col = state.noteColors[n.idx]; if(col){ note.classList.add('recol'); note.style.background=`linear-gradient(180deg, ${col}, ${shade(col,-8)})`; note.style.borderColor=shade(col,-25); note.style.color='#111318'; note.style.setProperty('--ring-color', shade(col,-40)); }
+      if(state.pulseIntervals[intervalLabel(rootIdx,n.idx)]){ note.classList.add('pulse'); const pcol = state.noteColors[n.idx] || HILITE_COL.R; note.style.setProperty('--pulse-color', pcol); note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35)); }
+      markers.appendChild(note);
+    });
+  });
+  const lbl = el('startFretLabel'); if(lbl) lbl.textContent = String(minF);
+}
+function shapeLength(){ return spelledScale(state.key, state.scaleName).noteIdxs.length; }
+function renderScaleEverything(){ renderBoardScale(); el('shapeLabel').textContent = `Shape ${ (state.shapeIndex % shapeLength()) + 1 } / ${ shapeLength() }`; renderSwatches2(); }
+
+// ---- Chord chips (triads & sevenths) — used in Fretboard block
+function scaleForChords(){
+  // Use the currently selected (or custom) scale as-is.
+  return state.scaleName;
+}
+function buildDiatonicTriads(){
+  const base = scaleForChords();
+  const sc = spelledScale(state.key, base);
+  const noteIdxs = sc.noteIdxs; const names = sc.names; const k = noteIdxs.length;
+  const romans=['I','II','III','IV','V','VI','VII'];
+  const out=[];
+  for(let d=0; d<k; d++){
+    const r=noteIdxs[d], t=noteIdxs[(d+2)%k], f=noteIdxs[(d+4)%k];
+    const pcs = new Set([r,t,f]);
+    if(pcs.size < 3) continue; // need 3 distinct tones available in the scale
+    const i3=(t-r+12)%12, i5=(f-r+12)%12;
+    let quality='Maj';
+    if(i3===3&&i5===7) quality='Min';
+    else if(i3===3&&i5===6) quality='Dim';
+    else if(i3===4&&i5===8) quality='Aug';
+    let rn=romans[d%7];
+    if(quality==='Min') rn=rn.toLowerCase();
+    if(quality==='Dim') rn=rn.toLowerCase()+'°';
+    if(quality==='Aug') rn=rn+'+';
+    const rootName = names[d%names.length];
+    out.push({ rn, quality, rootName, pcs, root:r, third:t, fifth:f, degree:d });
+  }
+  return out;
+}
+function buildDiatonicSevenths(){
+  const base=scaleForChords();
+  const sc=spelledScale(state.key, base);
+  const noteIdxs=sc.noteIdxs; const names=sc.names; const k=noteIdxs.length;
+  const romans=['I','II','III','IV','V','VI','VII'];
+  const out=[];
+  for(let d=0; d<k; d++){
+    const r=noteIdxs[d], t=noteIdxs[(d+2)%k], f=noteIdxs[(d+4)%k], s=noteIdxs[(d+6)%k];
+    const pcs = new Set([r,t,f,s]);
+    if(pcs.size < 4) continue; // need 4 distinct tones
+    const i3=(t-r+12)%12, i5=(f-r+12)%12, i7=(s-r+12)%12;
+    let quality='Maj7';
+    if(i3===4&&i5===7&&i7===10) quality='Dom7';
+    else if(i3===3&&i5===7&&i7===10) quality='m7';
+    else if(i3===3&&i5===6&&i7===10) quality='m7b5';
+    else if(i3===4&&i5===8&&i7===11) quality='Maj7#5';
+    else if(i3===3&&i5===7&&i7===11) quality='mMaj7';
+    let rn = romans[d%7];
+    if(quality==='m7' || quality==='m7b5' || quality==='mMaj7') rn = rn.toLowerCase() + (quality==='m7b5'?'ø':'');
+    if(quality==='Dom7') rn = rn + '7';
+    if(quality==='Maj7') rn = rn + '7';
+    if(quality==='Maj7#5') rn = rn + 'Δ7#5';
+    const rootName = names[d%names.length];
+    out.push({ rn, quality, rootName, pcs, root:r, third:t, fifth:f, seventh:s, degree:d });
+  }
+  return out;
+}
+
+function buildSusChords(){
+  const sc=spelledScale(state.key, state.scaleName);
+  const set=sc.set; const names=sc.names; const noteIdxs=sc.noteIdxs; const k=noteIdxs.length;
+  const romans=['I','II','III','IV','V','VI','VII'];
+  const out=[];
+  for(let d=0; d<k; d++){
+    const r=noteIdxs[d]; const p5=(r+7)%12; if(!set.has(p5)) continue;
+    const rootName = names[d%names.length];
+    const s2=(r+2)%12; if(set.has(s2)) out.push({ rn:romans[d%7], quality:'sus2', rootName, pcs:new Set([r,s2,p5]), root:r, third:s2, fifth:p5, degree:d });
+    const s4=(r+5)%12; if(set.has(s4)) out.push({ rn:romans[d%7], quality:'sus4', rootName, pcs:new Set([r,s4,p5]), root:r, third:s4, fifth:p5, degree:d });
+  }
+  return out;
+}
+function buildPowerChords(){
+  const sc=spelledScale(state.key, state.scaleName);
+  const set=sc.set; const names=sc.names; const noteIdxs=sc.noteIdxs; const k=noteIdxs.length;
+  const romans=['I','II','III','IV','V','VI','VII'];
+  const out=[];
+  for(let d=0; d<k; d++){
+    const r=noteIdxs[d]; const p5=(r+7)%12; if(!set.has(p5)) continue;
+    const rootName = names[d%names.length];
+    out.push({ rn:romans[d%7], quality:'5', rootName, pcs:new Set([r,p5]), root:r, fifth:p5, degree:d });
+  }
+  return out;
+}
+function isSameSet(a,b){ if(!a||!b) return false; if(a.size!==b.size) return false; for(const v of a){ if(!b.has(v)) return false; } return true; }
+function renderChordChips(){
+  const matrix = el('chipMatrix'); if(!matrix) return; matrix.innerHTML='';
+  matrix.style.setProperty('--cols','7');
+
+  const showSus = !!(el('toggleSus') && el('toggleSus').checked);
+  const showPow = !!(el('togglePower') && el('togglePower').checked);
+
+  const tris = buildDiatonicTriads();
+  const sevs = buildDiatonicSevenths();
+  const susAll = showSus ? buildSusChords() : [];
+  const pows = showPow ? buildPowerChords() : [];
+
+  const toMap = (arr) => { const m=new Map(); arr.forEach(ch=>{ if(!m.has(ch.degree)) m.set(ch.degree, ch); }); return m; };
+
+  const rows = [];
+  rows.push(toMap(tris));
+  rows.push(toMap(sevs));
+  if(showSus){
+    const m2=new Map(); susAll.filter(c=>c.quality==='sus2').forEach(ch=>{ if(!m2.has(ch.degree)) m2.set(ch.degree,ch); }); rows.push(m2);
+    const m4=new Map(); susAll.filter(c=>c.quality==='sus4').forEach(ch=>{ if(!m4.has(ch.degree)) m4.set(ch.degree,ch); }); rows.push(m4);
+  }
+  if(showPow){ rows.push(toMap(pows)); }
+
+  const makeChip = (ch)=>{
+    if(!ch){ const g=document.createElement('div'); g.className='chip ghost'; g.innerHTML='&nbsp;'; return g; }
+    const c=document.createElement('div'); c.className='chip';
+    c.textContent = `${ch.rn} — ${ch.rootName} ${ch.quality}`;
+    if(isSameSet(state.highlightSet,ch.pcs)) c.classList.add('active');
+    c.addEventListener('click',()=>applyChordHighlight(ch));
+    return c;
+  };
+
+  for(const rowMap of rows){
+    for(let deg=0; deg<7; deg++){
+      const ch = rowMap.get(deg) || null;
+      matrix.appendChild(makeChip(ch));
+    }
+  }
+}
+
+function applyChordHighlight(ch){
+  state.highlightSet = ch.pcs;
+  state.chordRootIdx = ch.root;
+  setDefaultPalette();
+  if(ch.root != null)   state.noteColors[ch.root]   = HILITE_COL.R;
+  if(ch.third != null)  state.noteColors[ch.third]  = HILITE_COL.third;
+  if(ch.fifth != null)  state.noteColors[ch.fifth]  = HILITE_COL.fifth;
+  if(ch.seventh != null)state.noteColors[ch.seventh]= HILITE_COL.seventh;
+  renderEverything();
+}
+
+// ========== CUSTOM SCALE (Circle) ==========
+function renderCustomCircle(){
+  const wrap = el('customCircle'); if(!wrap) return; wrap.innerHTML='';
+  const rootIdx = idxOf(state.key);
+  const selected = new Set([0, ...state.customSemis.map(n=>((n%12)+12)%12)]);
+  const R = 42; // percent radius from center
+  for(let d=0; d<12; d++){
+    const ang = (d/12)*2*Math.PI - Math.PI/2;
+    const x = 50 + R * Math.cos(ang);
+    const y = 50 + R * Math.sin(ang);
+    const idx = (rootIdx + d) % 12;
+    const lab = intervalLabel(rootIdx, idx);
+    const div = document.createElement('div');
+    div.className = 'note' + (selected.has(d) ? '' : ' off');
+    div.style.left = x+'%'; div.style.top = y+'%';
+    div.textContent = state.showIntervals ? lab : chooseSpelling(idx);
+    if(selected.has(d)){
+      const col = state.intervalColorMap[lab];
+      if(col){ div.classList.add('recol'); div.style.background=`linear-gradient(180deg, ${col}, ${shade(col,-8)})`; div.style.borderColor=shade(col,-25); div.style.color='#111318'; div.style.setProperty('--ring-color', shade(col,-40)); }
+      if(state.pulseIntervals[lab]){ div.classList.add('pulse'); const pcol = col || HILITE_COL.R; div.style.setProperty('--pulse-color', pcol); div.style.setProperty('--pulse-alpha', hexA(pcol,0.35)); }
+    }
+    div.addEventListener('click', ()=>{
+      if(d===0) return; // root always included
+      if(selected.has(d)) selected.delete(d); else selected.add(d);
+      state.customSemis = Array.from(selected).sort((a,b)=>a-b);
+      setDefaultPalette();
+      renderEverything(); renderScaleEverything(); renderCustomCircle(); renderSwatches3();
+    });
+    wrap.appendChild(div);
+  }
+}
+function renderChordEverything(){ renderCustomCircle(); renderSwatches3(); }
+
+// ========== SWATCHES ==========
+function renderSwatchesInto(containerId){
+  const sw = el(containerId); if(!sw) return; sw.innerHTML='';
+  const sc = spelledScale(state.key, state.scaleName); const rootIdx = idxOf(state.key);
+  const COLORS = { '': '', red:'#ff6b6b', orange:'#ffa94d', yellow:'#ffd43b', green:'#66d4a2', teal:'#2ad1c2', cyan:'#64cfff', blue:'#5a95ff', purple:'#b197fc', pink:'#ff87b7', grey:'#cfd4e1' };
+  const contrastOn = (hex)=>{ if(!hex) return '#e9eef9'; const c=parseInt(hex.slice(1),16); const r=(c>>16)&255,g=(c>>8)&255,b=c&255; const L=(0.2126*r+0.7152*g+0.0722*b)/255; return L>0.6?'#111':'#fff'; };
+  const optionsHtml = Object.entries(COLORS).map(([name,hex])=>{
+    const label = name ? name[0].toUpperCase()+name.slice(1) : 'None';
+    const style = hex ? `style="background:${hex};color:${contrastOn(hex)}"` : '';
+    return `<option value="${hex}" ${style}>${name ? '■ ' : ''}${label}</option>`;
+  }).join('');
+  sc.noteIdxs.forEach(idx=>{
+    const lab = intervalLabel(rootIdx, idx); const name = chooseSpelling(idx);
+    const wrap = document.createElement('div'); wrap.className='swatch'; wrap.innerHTML = `<div class="name">${name}</div><div class="interval">${lab}</div>`;
+    // Colour select
+    const sel = document.createElement('select'); sel.className='color-select'; sel.innerHTML=optionsHtml; const current=state.intervalColorMap[lab]||''; sel.value=current||'';
+    if(current){ sel.style.setProperty('--sel-color', current); sel.setAttribute('data-color','1'); }
+    sel.addEventListener('change',(e)=>{ const val=e.target.value||null; state.intervalColorMap[lab]=val; setDefaultPalette(); renderBoardFret(); renderBoardScale(); renderCustomCircle(); renderSwatches(); renderSwatches2(); renderSwatches3(); });
+    sel.addEventListener('pointerdown',(ev)=>{ if(ev.shiftKey){ state.intervalColorMap[lab]=null; setDefaultPalette(); sel.value=''; sel.style.removeProperty('--sel-color'); sel.removeAttribute('data-color'); renderBoardFret(); renderBoardScale(); renderCustomCircle(); renderSwatches(); renderSwatches2(); renderSwatches3(); }});
+    wrap.appendChild(sel);
+    // Pulse toggle per degree
+    const row = document.createElement('div'); row.className='row'; row.style.marginTop = '6px';
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.className='pulse-check'; cb.checked = !!(state.pulseIntervals && state.pulseIntervals[lab]);
+    const lb = document.createElement('label'); lb.textContent='Pulse'; lb.style.margin='0'; lb.style.opacity='.9';
+    cb.addEventListener('change', ()=>{ if(!state.pulseIntervals) state.pulseIntervals={}; state.pulseIntervals[lab] = !!cb.checked; renderBoardFret(); renderBoardScale(); renderCustomCircle(); });
+    row.appendChild(cb); row.appendChild(lb); wrap.appendChild(row);
+    sw.appendChild(wrap);
+  });
+}
+
+function renderSwatches(){ renderSwatchesInto('swatches'); }
+function renderSwatches2(){ renderSwatchesInto('swatches2'); }
+function renderSwatches3(){ renderSwatchesInto('swatches3'); }
+
+// ========== CONTROLS & EVENTS ==========
+function buildPresetList(){
+  const instr = el('instrument').value; const sel = el('preset'); sel.innerHTML='';
+  const presets = PRESETS[instr] || {}; const names = Object.keys(presets);
+  sel.innerHTML = names.map(n=>`<option>${n}</option>`).join('');
+  sel.value = names[0] || '';
+}
+function applyPreset(){
+  const instr = el('instrument').value; const p = el('preset').value; const presets = PRESETS[instr]||{}; const tun = presets[p] || INSTRUMENTS[instr] || INSTRUMENTS['Guitar — 6-string (E A D G B E)'];
+  state.baseTuning = tun.slice(); state.rows = state.baseTuning.length; document.documentElement.style.setProperty('--rows', state.rows);
+}
+function setInstrument(name){
+  // rows from instrument
+  const base = INSTRUMENTS[name] || INSTRUMENTS['Guitar — 6-string (E A D G B E)'];
+  state.rows = base.length; document.documentElement.style.setProperty('--rows', state.rows);
+  buildPresetList(); applyPreset(); setDefaultPalette(); updateTransposeUI(); renderEverything(); renderScaleEverything(); renderChordEverything();
+}
+function updateTransposeUI(){ el('tVal').textContent = String(state.transpose); document.documentElement.style.setProperty('--rows', state.rows); }
+function syncKeyScaleToTab1(){ el('key').value = state.key; el('scale').value = state.scaleName; }
+function syncKeyScaleToTab2(){ el('key2').value = state.key; el('scale2').value = state.scaleName; }
+function syncKeyScaleToTab3(){ const k3=el('key3'); if(k3) k3.value = state.key; }
+function renderEverything(){ renderBoardFret(); renderChordChips(); renderSwatches(); updateTransposeUI(); }
+
+function renderControls(){
+  // populate keys & scales
+  const keyOpts = ALL_KEYS.map(k=>`<option value="${k}">${k}</option>`).join('');
+  const scaleOpts = buildScaleOptionsHTML();
+  el('key').innerHTML = keyOpts; el('key').value = state.key;
+  el('scale').innerHTML = scaleOpts; el('scale').value = state.scaleName;
+  el('key2').innerHTML = keyOpts; el('key2').value = state.key;
+  el('scale2').innerHTML = scaleOpts; el('scale2').value = state.scaleName;
+  const k3 = el('key3'); if(k3){ k3.innerHTML = keyOpts; k3.value = state.key; }
+  // instrument + presets
+  el('instrument').value = 'Guitar — 6-string (E A D G B E)';
+  buildPresetList(); applyPreset();
+  // misc labels
+  el('displayMode').textContent = state.showIntervals ? 'Show Note Names' : 'Show Intervals';
+}
+
+
+function bindEvents(){
+  // Tabs
+  el('tabFretBtn').addEventListener('click', ()=>{ el('tabFretBtn').classList.add('active'); el('tabScaleBtn').classList.remove('active'); el('tabChordBtn').classList.remove('active'); el('tabFret').style.display='block'; el('tabScale').style.display='none'; el('tabChord').style.display='none'; });
+  el('tabScaleBtn').addEventListener('click', ()=>{ el('tabScaleBtn').classList.add('active'); el('tabFretBtn').classList.remove('active'); el('tabChordBtn').classList.remove('active'); el('tabScale').style.display='block'; el('tabFret').style.display='none'; el('tabChord').style.display='none'; renderScaleEverything(); });
+  el('tabChordBtn').addEventListener('click', ()=>{ el('tabChordBtn').classList.add('active'); el('tabFretBtn').classList.remove('active'); el('tabScaleBtn').classList.remove('active'); el('tabChord').style.display='block'; el('tabFret').style.display='none'; el('tabScale').style.display='none'; renderChordEverything(); });
+  // Fretboard controls
+  el('instrument').addEventListener('change', (e)=>{ setInstrument(e.target.value); });
+  el('preset').addEventListener('change', ()=>{ applyPreset(); setDefaultPalette(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  el('tMinus').addEventListener('click', ()=>{ state.transpose=Math.min(12, state.transpose+1); updateTransposeUI(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  el('tPlus').addEventListener('click', ()=>{ state.transpose=Math.max(0, state.transpose-1); updateTransposeUI(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  el('key').addEventListener('change', (e)=>{ state.key=e.target.value; state.highlightSet=null; state.chordRootIdx=null; setDefaultPalette(); syncKeyScaleToTab2(); syncKeyScaleToTab3(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  el('scale').addEventListener('change', (e)=>{ state.scaleName=e.target.value; state.highlightSet=null; state.chordRootIdx=null; setDefaultPalette(); syncKeyScaleToTab2(); renderEverything(); renderScaleEverything(); });
+  el('displayMode').addEventListener('click', ()=>{ state.showIntervals=!state.showIntervals; el('displayMode').textContent = state.showIntervals ? 'Show Note Names' : 'Show Intervals'; renderBoardFret(); renderBoardScale(); renderCustomCircle(); });
+  el('clearHighlight').addEventListener('click', ()=>{ state.highlightSet=null; state.chordRootIdx=null; setDefaultPalette(); renderEverything(); });
+  // Scale explorer
+  el('key2').addEventListener('change', (e)=>{ state.key=e.target.value; setDefaultPalette(); syncKeyScaleToTab1(); syncKeyScaleToTab3(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  el('scale2').addEventListener('change', (e)=>{ state.scaleName=e.target.value; setDefaultPalette(); syncKeyScaleToTab1(); renderEverything(); renderScaleEverything(); });
+  el('shapePrev').addEventListener('click', ()=>{ const L=shapeLength(); state.shapeIndex=(state.shapeIndex - 1 + L) % L; renderScaleEverything(); });
+  el('shapeNext').addEventListener('click', ()=>{ const L=shapeLength(); state.shapeIndex=(state.shapeIndex + 1) % L; renderScaleEverything(); });
+  // Custom-scale toggles next to scale dropdowns
+  const cs1 = el('customScaleToggle1'), cs2 = el('customScaleToggle2');
+  if(cs1) cs1.addEventListener('change', (e)=>{ state.customScaleActive = e.target.checked; if(cs2) cs2.checked = state.customScaleActive; el('scale').disabled=state.customScaleActive; el('scale2').disabled=state.customScaleActive; setDefaultPalette(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  if(cs2) cs2.addEventListener('change', (e)=>{ state.customScaleActive = e.target.checked; if(cs1) cs1.checked = state.customScaleActive; el('scale').disabled=state.customScaleActive; el('scale2').disabled=state.customScaleActive; setDefaultPalette(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
+  // Resize
+  window.addEventListener('resize', ()=>{ renderBoardFret(); renderBoardScale(); renderCustomCircle(); });
+  // Chord toggles
+  const sus = el('toggleSus'); if(sus) sus.addEventListener('change', ()=> renderChordChips());
+  const pow = el('togglePower'); if(pow) pow.addEventListener('change', ()=> renderChordChips());
+}
+
+// ===== Boot =====
+function boot(){
+  try{
+    renderControls();
+    bindEvents();
+    setDefaultPalette();
+    renderEverything();
+    renderScaleEverything();
+    renderChordEverything();
+  }catch(err){
+    const box=document.getElementById('errbox')||(()=>{const p=document.createElement('pre');p.id='errbox';document.body.appendChild(p);return p;})();
+    box.textContent = `Init error: ${err && err.message ? err.message : err}`;
+    console.error(err);
+  }
+}
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', boot);
+}else{
+  boot();
+}
+</script>
+</body>
+</html>
