@@ -212,8 +212,12 @@
         </div>
 
         <div class="block" aria-label="Note colour palette">
-          <h3>Pick colours for scale degrees (Shift-click to clear).</h3>
+          <h3>Pick colours for scale intervals (Shift-click to clear).</h3>
           <div id="swatches" class="swatches"></div>
+        </div>
+        <div class="block" aria-label="Chord interval palette">
+          <h3>Pick colours for chord intervals (Shift-click to clear).</h3>
+          <div id="swatchesChord" class="swatches"></div>
         </div>
       </section>
     </section>
@@ -257,7 +261,7 @@
       </section>
 
       <div class="block" aria-label="Scale note colour palette">
-        <h3>Pick colours for scale degrees (Shift-click to clear).</h3>
+        <h3>Pick colours for scale intervals (Shift-click to clear).</h3>
         <div id="swatches2" class="swatches"></div>
       </div>
     </section>
@@ -281,7 +285,7 @@
       </section>
 
       <div class="block" aria-label="Custom scale note colour palette">
-        <h3>Pick colours for scale degrees (Shift-click to clear).</h3>
+        <h3>Pick colours for scale intervals (Shift-click to clear).</h3>
         <div id="swatches3" class="swatches"></div>
       </div>
     </section>
@@ -304,6 +308,25 @@ const NATURALS = ['C','D','E','F','G','A','B'];
 const N_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const N_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const ALL_KEYS = ['C','C#','Db','D','D#','Eb','E','F','F#','Gb','G','G#','Ab','A','A#','Bb','B','Cb'];
+
+// Natural letter → pitch-class map (no accidentals)
+const NAT_PC = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+
+// Spell a target pitch-class using a specific letter, allowing bb/## if needed
+function spellForLetter(letter, targetPC, preferSharps){
+  const nat = NAT_PC[letter];
+  // allow at most double accidentals
+  for(let k=-2; k<=2; k++){
+    if(((nat + k + 120) % 12) === targetPC){
+      if(k === 0) return letter;
+      if(k < 0) return letter + 'b'.repeat(-k); // b or bb
+      return letter + '#'.repeat(k);             // # or ##
+    }
+  }
+  // Fallback (shouldn’t hit for 12-TET with ≤ double accidentals)
+  const s = N_SHARP[targetPC], f = N_FLAT[targetPC];
+  return preferSharps ? s : f;
+}
 
 // ---- Scales (grouped + ordered) ----
 const SCALE_GROUPS = [
@@ -438,25 +461,34 @@ const PRESETS = {
 };
 
 const SIDE_DOT_FRETS = [3,5,7,9,12,15,17,19];
-const HILITE_COL = { R: '#66d4a2', third:'#2ad1c2', fifth:'#64cfff', seventh:'#5a95ff' };
+const HILITE_COL = { R: '#66d4a2', third:'#64cfff', fifth:'#b197fc', seventh:'#ff87b7' };
 
 // ---- App state ----
 const state = {
+  // core music state
   key: 'C',
   scaleName: 'Major (Ionian)',
+  transpose: 0,
+  showIntervals: false,
+  baseTuning: ['E','A','D','G','B','E'],
   rows: 6,
   frets: 12,
-  baseTuning: INSTRUMENTS['Guitar — 6-string (E A D G B E)'].slice(),
-  transpose: 0,
   highlightSet: null,
   chordRootIdx: null,
+
+  // pulses & colours
   intervalColorMap: { 'R': '#66d4a2' },
-  noteColors: Array(12).fill(null),
-  showIntervals: false,
   pulseIntervals: { 'R': true },
+  chordIntervalColorMap: { 'R': '#66d4a2', 'M2':'#64cfff', 'M3':'#64cfff', 'b3':'#64cfff', 'P4':'#64cfff', 'P5':'#b197fc', 'b5':'#b197fc', '#5':'#b197fc', 'b7':'#ff87b7', 'M7':'#ff87b7' },
+  chordPulseIntervals: { 'R': true },
+
+  // currently selected chord tones snapshot
+  chordTones: null,
+
   // custom scale
   customScaleActive: false,
   customSemis: [0,2,4,5,7,9,11],
+
   // scale explorer
   shapeIndex: 0
 };
@@ -467,7 +499,56 @@ function normalizeNote(s){ if(!s) return null; s=String(s).trim().replace(/♯/g
 const idxOf = note => NOTE_INDEX[note];
 function preferSharpsForKey(key){ if(key.includes('b')) return false; if(key.includes('#')) return true; const flats=new Set(['F','Bb','Eb','Ab','Db','Gb','Cb']); return !flats.has(key); }
 function diatonicLetterSeq(tonic){ const t=tonic[0]; const i=NATURALS.indexOf(t); const out=[]; for(let k=0;k<7;k++) out.push(NATURALS[(i+k)%7]); return out; }
-function intervalLabel(rootIdx, noteIdx){ const d=(noteIdx-rootIdx+12)%12; return ['R','b2','M2','b3','M3','P4','#4','P5','b6','M6','b7','M7'][d]; }
+function intervalLabel(rootIdx, noteIdx){
+  const d = (noteIdx - rootIdx + 12) % 12;
+  // Use b5 instead of #4 for the tritone
+  return ['R','b2','M2','b3','M3','P4','b5','P5','b6','M6','b7','M7'][d];
+}
+
+// Spelling-aware interval labels for scale context (resolves #5 vs b6, bb7 vs M6, etc.)
+function intervalLabelInScale(tonic, scaleName, noteIdx){
+  const sc = spelledScale(tonic, scaleName);
+  const pos = sc.noteIdxs.indexOf(noteIdx);
+  if(pos === -1){
+    // Not in current scale spelling → fall back to semitone map
+    return intervalLabel(idxOf(tonic), noteIdx);
+  }
+  const name = sc.names[pos]; // e.g., G#, Bbb
+  const letter = name[0];
+  const sharps = (name.match(/#/g) || []).length;
+  const flats  = (name.match(/b/g) || []).length;
+  const acc = sharps - flats; // -2..+2
+  const letters = diatonicLetterSeq(tonic);
+  let p = letters.indexOf(letter); // 0..6 (0 = R)
+  if(p < 0) p = pos % 7; // safety fallback
+  if(p === 0) return 'R';
+  const num = [null,'2','3','4','5','6','7'][p];
+  const isPerfect = (p === 3 || p === 4); // 4th or 5th
+  if(isPerfect){
+    // Policy: prefer b5 over #4 for the tritone
+    if(p === 3 && acc > 0) return 'b5';
+    if(acc === 0) return 'P'+num;
+    if(acc < 0) return 'b'.repeat(-acc)+num;
+    return '#'.repeat(acc)+num;
+  } else {
+    if(acc === 0) return 'M'+num;
+    if(acc < 0) return 'b'.repeat(-acc)+num; // m, bb
+    return '#'.repeat(acc)+num;
+  }
+}
+function chordIntervalLabel(rootIdx, noteIdx, chord){
+  const d = (noteIdx - rootIdx + 12) % 12;
+  // For chord contexts, show #5 instead of b6 when the fifth is augmented
+  if(d===8) return '#5';
+  return intervalLabel(rootIdx, noteIdx);
+}
+
+function chordColorFor(label, cmap){
+  if(cmap && cmap[label]) return cmap[label];
+  if(label==='b5' || label==='#5') return (cmap && cmap['P5']) || HILITE_COL.fifth;
+  return null;
+}
+
 function buildWeights(n){ const ratio=0.94; const w=[]; for(let i=0;i<n;i++) w.push(Math.pow(ratio,i)); const sum=w.reduce((a,b)=>a+b,0); return w.map(x=>x/sum); }
 function cumulativePositions(weights){ const out=[]; let acc=0; for(let i=0;i<weights.length;i++){ acc+=weights[i]; out.push(acc); } return out; }
 function shade(hex,pct){ if(!/^#([0-9a-f]{6})$/i.test(hex)) return hex; const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255; const f=(100+pct)/100; r=Math.min(255,Math.max(0,Math.round(r*f))); g=Math.min(255,Math.max(0,Math.round(g*f))); b=Math.min(255,Math.max(0,Math.round(b*f))); return '#' + ((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
@@ -484,20 +565,33 @@ function spelledScale(tonic, scaleName){
     const steps = SCALES[scaleName] || [2,2,1,2,2,2,1];
     semis=[0]; let acc=0; for(const st of steps){ acc=(acc+st)%12; if(!semis.includes(acc)) semis.push(acc); }
   }
-  const letters = diatonicLetterSeq(tonic);
+  const letters = diatonicLetterSeq(tonic); // e.g., for Cb → [C,D,E,F,G,A,B]
   const rootIdx = idxOf(tonic);
-  const names = semis.map((d,i)=>{ const target=(rootIdx+d)%12; const letter=letters[i%letters.length]; const s=N_SHARP[target], f=N_FLAT[target]; const ok=n=>n[0]===letter; if(ok(s)) return s; if(ok(f)) return f; return preferSharps ? s : f; });
-  const noteIdxs = semis.map(d=> (rootIdx+d)%12);
+  const names = semis.map((d,i)=>{
+    const target = (rootIdx + d) % 12;
+    const letter = letters[i % 7];
+    return spellForLetter(letter, target, preferSharps);
+  });
+  const noteIdxs = semis.map(d=> (rootIdx + d) % 12);
   const set = new Set(noteIdxs);
   return { names, noteIdxs, set };
 }
-function chooseSpelling(noteIdx){ const { names } = spelledScale(state.key, state.scaleName); const s=N_SHARP[noteIdx], f=N_FLAT[noteIdx]; if(names.includes(s)) return s; if(names.includes(f)) return f; const preferSharps = preferSharpsForKey(state.key); return preferSharps ? s : f; }
+function chooseSpelling(noteIdx){
+  const sc = spelledScale(state.key, state.scaleName);
+  const pos = sc.noteIdxs.indexOf(noteIdx);
+  if(pos !== -1) return sc.names[pos]; // in-scale: use enforced letter spelling (may include bb/##)
+  const preferSharps = preferSharpsForKey(state.key);
+  const s = N_SHARP[noteIdx], f = N_FLAT[noteIdx];
+  return preferSharps ? s : f;
+}
 function setDefaultPalette(){
   const rootIdx = idxOf(state.key);
   const map = state.intervalColorMap || { 'R':'#66d4a2' };
+  // Back-compat: if an older session stored a colour under '#4', reuse it for 'b5'
+  if(map['#4'] && !map['b5']) map['b5'] = map['#4'];
   state.noteColors = Array(12).fill(null);
   const sc = spelledScale(state.key, state.scaleName);
-  sc.noteIdxs.forEach(idx=>{ const lab=intervalLabel(rootIdx, idx); const col=map[lab]||null; if(col) state.noteColors[idx]=col; });
+  sc.noteIdxs.forEach(idx=>{ const lab = intervalLabelInScale(state.key, state.scaleName, idx); const col=map[lab]||null; if(col) state.noteColors[idx]=col; });
 }
 
 // ---- Tuning helpers ----
@@ -548,7 +642,7 @@ function renderLabels(){
     }
     if(state.highlightSet && !state.highlightSet.has(pc)) tag.classList.add('dim');
     // pulse on root or chord root, only if in current visible highlight context
-    if(sc.set.has(pc) && (!state.highlightSet || state.highlightSet.has(pc)) && state.pulseIntervals[intervalLabel(rootIdx, pc)]){
+    if(sc.set.has(pc) && (!state.highlightSet || state.highlightSet.has(pc)) && state.pulseIntervals[intervalLabelInScale(state.key, state.scaleName, pc)]){
       tag.classList.add('pulse');
       const pcol = state.noteColors[pc] || HILITE_COL.R;
       tag.style.setProperty('--pulse-color', pcol);
@@ -594,7 +688,7 @@ function renderBoardFret(){
       note.className='note';
       note.style.left = cx + '%';
       note.style.top = oy + '%';
-      note.textContent = state.showIntervals ? intervalLabel(rootIdx,noteIdx) : chooseSpelling(noteIdx);
+      note.textContent = state.showIntervals ? intervalLabelInScale(state.key, state.scaleName, noteIdx) : chooseSpelling(noteIdx);
       const col = state.noteColors[noteIdx];
       if(col){
         note.classList.add('recol');
@@ -607,11 +701,21 @@ function renderBoardFret(){
         note.style.opacity = '0.22';
         note.style.filter = 'grayscale(0.5)';
       }
-      if(sc.set.has(noteIdx) && (!state.highlightSet || state.highlightSet.has(noteIdx)) && state.pulseIntervals[intervalLabel(rootIdx,noteIdx)]){
-        note.classList.add('pulse');
-        const pcol = state.noteColors[noteIdx] || HILITE_COL.R;
-        note.style.setProperty('--pulse-color', pcol);
-        note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+      {
+        let doPulse=false; let pcol = state.noteColors[noteIdx] || HILITE_COL.R;
+        if(state.highlightSet && state.chordRootIdx!=null){
+          if(state.highlightSet.has(noteIdx)){
+            const labC = chordIntervalLabel(state.chordRootIdx, noteIdx, state.chordTones);
+            if(state.chordPulseIntervals && state.chordPulseIntervals[labC]) doPulse=true;
+          }
+        } else {
+          if(state.pulseIntervals && state.pulseIntervals[ intervalLabelInScale(state.key, state.scaleName, noteIdx) ]) doPulse=true;
+        }
+        if(doPulse){
+          note.classList.add('pulse');
+          note.style.setProperty('--pulse-color', pcol);
+          note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+        }
       }
       if(!sc.set.has(noteIdx)){
         note.style.opacity = '0.28';
@@ -642,7 +746,7 @@ function renderBoardFret(){
       note.className='note';
       note.style.left=cx+'%';
       note.style.top=oy+'%';
-      note.textContent = state.showIntervals ? intervalLabel(rootIdx,noteIdx) : chooseSpelling(noteIdx);
+      note.textContent = state.showIntervals ? intervalLabelInScale(state.key, state.scaleName, noteIdx) : chooseSpelling(noteIdx);
 
       const col = state.noteColors[noteIdx];
       if(col){
@@ -656,11 +760,21 @@ function renderBoardFret(){
         note.style.opacity='0.22';
         note.style.filter='grayscale(0.5)';
       }
-      if((!state.highlightSet || state.highlightSet.has(noteIdx)) && state.pulseIntervals[intervalLabel(rootIdx,noteIdx)]){
-        note.classList.add('pulse');
-        const pcol = state.noteColors[noteIdx] || HILITE_COL.R;
-        note.style.setProperty('--pulse-color', pcol);
-        note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+      {
+        let doPulse=false; let pcol = state.noteColors[noteIdx] || HILITE_COL.R;
+        if(state.highlightSet && state.chordRootIdx!=null){
+          if(!state.highlightSet || state.highlightSet.has(noteIdx)){
+            const labC = chordIntervalLabel(state.chordRootIdx, noteIdx, state.chordTones);
+            if(state.chordPulseIntervals && state.chordPulseIntervals[labC]) doPulse=true;
+          }
+        } else {
+          if(state.pulseIntervals && state.pulseIntervals[ intervalLabelInScale(state.key, state.scaleName, noteIdx) ]) doPulse=true;
+        }
+        if(doPulse){
+          note.classList.add('pulse');
+          note.style.setProperty('--pulse-color', pcol);
+          note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35));
+        }
       }
       markers.appendChild(note);
     }
@@ -741,9 +855,9 @@ function renderBoardScale(){
     sd.notes.forEach(n=>{
       const cx = ((n.fret - minF + 0.5)/needed)*100;
       const note=document.createElement('div'); note.className='note'; note.style.left=cx+'%'; note.style.top=oy+'%';
-      note.textContent = state.showIntervals ? intervalLabel(rootIdx,n.idx) : chooseSpelling(n.idx);
+      note.textContent = state.showIntervals ? intervalLabelInScale(state.key, state.scaleName, n.idx) : chooseSpelling(n.idx);
       const col = state.noteColors[n.idx]; if(col){ note.classList.add('recol'); note.style.background=`linear-gradient(180deg, ${col}, ${shade(col,-8)})`; note.style.borderColor=shade(col,-25); note.style.color='#111318'; note.style.setProperty('--ring-color', shade(col,-40)); }
-      if(state.pulseIntervals[intervalLabel(rootIdx,n.idx)]){ note.classList.add('pulse'); const pcol = state.noteColors[n.idx] || HILITE_COL.R; note.style.setProperty('--pulse-color', pcol); note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35)); }
+      if(state.pulseIntervals[ intervalLabelInScale(state.key, state.scaleName, n.idx) ]){ note.classList.add('pulse'); const pcol = state.noteColors[n.idx] || HILITE_COL.R; note.style.setProperty('--pulse-color', pcol); note.style.setProperty('--pulse-alpha', hexA(pcol, 0.35)); }
       markers.appendChild(note);
     });
   });
@@ -876,13 +990,24 @@ function renderChordChips(){
 }
 
 function applyChordHighlight(ch){
-  state.highlightSet = ch.pcs;
-  state.chordRootIdx = ch.root;
+  // persist current chord selection so swatch edits can recolor it
+  state.chordTones = {
+    pcs: ch.pcs,
+    root: (ch.root ?? null),
+    third: ('third' in ch ? ch.third : null),
+    fifth: ('fifth' in ch ? ch.fifth : null),
+    seventh: ('seventh' in ch ? ch.seventh : null)
+  };
+  state.highlightSet = state.chordTones.pcs;
+  state.chordRootIdx = state.chordTones.root;
   setDefaultPalette();
-  if(ch.root != null)   state.noteColors[ch.root]   = HILITE_COL.R;
-  if(ch.third != null)  state.noteColors[ch.third]  = HILITE_COL.third;
-  if(ch.fifth != null)  state.noteColors[ch.fifth]  = HILITE_COL.fifth;
-  if(ch.seventh != null)state.noteColors[ch.seventh]= HILITE_COL.seventh;
+  const cmap = state.chordIntervalColorMap || {};
+  const labR = 'R';
+  const {root, third, fifth, seventh} = state.chordTones;
+  if(root != null)   state.noteColors[root]   = cmap[labR] || HILITE_COL.R;
+  if(third != null)  { const l=chordIntervalLabel(root, third, state.chordTones);   state.noteColors[third]  = chordColorFor(l, cmap) || HILITE_COL.third; }
+  if(fifth != null)  { const l=chordIntervalLabel(root, fifth, state.chordTones);   state.noteColors[fifth]  = chordColorFor(l, cmap) || HILITE_COL.fifth; }
+  if(seventh != null){ const l=chordIntervalLabel(root, seventh, state.chordTones); state.noteColors[seventh]= chordColorFor(l, cmap) || HILITE_COL.seventh; }
   renderEverything();
 }
 
@@ -897,7 +1022,7 @@ function renderCustomCircle(){
     const x = 50 + R * Math.cos(ang);
     const y = 50 + R * Math.sin(ang);
     const idx = (rootIdx + d) % 12;
-    const lab = intervalLabel(rootIdx, idx);
+    const lab = intervalLabelInScale(state.key, state.scaleName, idx);
     const div = document.createElement('div');
     div.className = 'note' + (selected.has(d) ? '' : ' off');
     div.style.left = x+'%'; div.style.top = y+'%';
@@ -922,36 +1047,91 @@ function renderChordEverything(){ renderCustomCircle(); renderSwatches3(); }
 // ========== SWATCHES ==========
 function renderSwatchesInto(containerId){
   const sw = el(containerId); if(!sw) return; sw.innerHTML='';
-  const sc = spelledScale(state.key, state.scaleName); const rootIdx = idxOf(state.key);
+  const sc = spelledScale(state.key, state.scaleName);
+  const rootIdx = idxOf(state.key);
+  // simple named palette
   const COLORS = { '': '', red:'#ff6b6b', orange:'#ffa94d', yellow:'#ffd43b', green:'#66d4a2', teal:'#2ad1c2', cyan:'#64cfff', blue:'#5a95ff', purple:'#b197fc', pink:'#ff87b7', grey:'#cfd4e1' };
   const contrastOn = (hex)=>{ if(!hex) return '#e9eef9'; const c=parseInt(hex.slice(1),16); const r=(c>>16)&255,g=(c>>8)&255,b=c&255; const L=(0.2126*r+0.7152*g+0.0722*b)/255; return L>0.6?'#111':'#fff'; };
-  const optionsHtml = Object.entries(COLORS).map(([name,hex])=>{
-    const label = name ? name[0].toUpperCase()+name.slice(1) : 'None';
-    const style = hex ? `style="background:${hex};color:${contrastOn(hex)}"` : '';
-    return `<option value="${hex}" ${style}>${name ? '■ ' : ''}${label}</option>`;
-  }).join('');
+  const optionsHtml = Object.entries(COLORS).map(([name,hex])=>{ const label=name? name[0].toUpperCase()+name.slice(1) : 'None'; const style = hex? `style="background:${hex};color:${contrastOn(hex)}"` : ''; return `<option value="${hex}" ${style}>${name? '■ ' : ''}${label}</option>`; }).join('');
+
+  // only intervals present in the current scale
   sc.noteIdxs.forEach(idx=>{
-    const lab = intervalLabel(rootIdx, idx); const name = chooseSpelling(idx);
-    const wrap = document.createElement('div'); wrap.className='swatch'; wrap.innerHTML = `<div class="name">${name}</div><div class="interval">${lab}</div>`;
-    // Colour select
-    const sel = document.createElement('select'); sel.className='color-select'; sel.innerHTML=optionsHtml; const current=state.intervalColorMap[lab]||''; sel.value=current||'';
+    const lab = intervalLabelInScale(state.key, state.scaleName, idx);
+    const name = chooseSpelling(idx);
+    const wrap = document.createElement('div');
+    wrap.className='swatch';
+    wrap.innerHTML = `<div class="name">${name}</div><div class="interval">${lab}</div>`;
+
+    const sel = document.createElement('select');
+    sel.className='color-select';
+    sel.innerHTML = optionsHtml;
+    const current = (state.intervalColorMap && state.intervalColorMap[lab]) || '';
+    sel.value = current || '';
     if(current){ sel.style.setProperty('--sel-color', current); sel.setAttribute('data-color','1'); }
-    sel.addEventListener('change',(e)=>{ const val=e.target.value||null; state.intervalColorMap[lab]=val; setDefaultPalette(); renderBoardFret(); renderBoardScale(); renderCustomCircle(); renderSwatches(); renderSwatches2(); renderSwatches3(); });
-    sel.addEventListener('pointerdown',(ev)=>{ if(ev.shiftKey){ state.intervalColorMap[lab]=null; setDefaultPalette(); sel.value=''; sel.style.removeProperty('--sel-color'); sel.removeAttribute('data-color'); renderBoardFret(); renderBoardScale(); renderCustomCircle(); renderSwatches(); renderSwatches2(); renderSwatches3(); }});
+
+    sel.addEventListener('change',(e)=>{
+      const val = e.target.value || null;
+      if(!state.intervalColorMap) state.intervalColorMap={};
+      state.intervalColorMap[lab] = val;
+      setDefaultPalette();
+      renderBoardFret(); renderBoardScale(); renderCustomCircle();
+      renderSwatches(); renderSwatches2(); renderSwatches3();
+    });
+    sel.addEventListener('pointerdown',(ev)=>{
+      if(ev.shiftKey){
+        if(!state.intervalColorMap) state.intervalColorMap={};
+        state.intervalColorMap[lab]=null; sel.value=''; sel.style.removeProperty('--sel-color'); sel.removeAttribute('data-color');
+        setDefaultPalette();
+        renderBoardFret(); renderBoardScale(); renderCustomCircle();
+        renderSwatches(); renderSwatches2(); renderSwatches3();
+      }
+    });
+
     wrap.appendChild(sel);
-    // Pulse toggle per degree
+
     const row = document.createElement('div'); row.className='row'; row.style.marginTop = '6px';
     const cb = document.createElement('input'); cb.type='checkbox'; cb.className='pulse-check'; cb.checked = !!(state.pulseIntervals && state.pulseIntervals[lab]);
     const lb = document.createElement('label'); lb.textContent='Pulse'; lb.style.margin='0'; lb.style.opacity='.9';
     cb.addEventListener('change', ()=>{ if(!state.pulseIntervals) state.pulseIntervals={}; state.pulseIntervals[lab] = !!cb.checked; renderBoardFret(); renderBoardScale(); renderCustomCircle(); });
     row.appendChild(cb); row.appendChild(lb); wrap.appendChild(row);
+
     sw.appendChild(wrap);
   });
 }
-
 function renderSwatches(){ renderSwatchesInto('swatches'); }
 function renderSwatches2(){ renderSwatchesInto('swatches2'); }
 function renderSwatches3(){ renderSwatchesInto('swatches3'); }
+function renderChordSwatches(){
+  const sw = el('swatchesChord'); if(!sw) return; sw.innerHTML='';
+  const ct = state.chordTones;
+  if(!ct || ct.root==null){ return; }
+  const base = ct.root;
+  const tones = [{ idx: ct.root }];
+  if(ct.third!=null)  tones.push({ idx: ct.third });
+  if(ct.fifth!=null)  tones.push({ idx: ct.fifth });
+  if(ct.seventh!=null)tones.push({ idx: ct.seventh });
+
+  const COLORS = { '': '', red:'#ff6b6b', orange:'#ffa94d', yellow:'#ffd43b', green:'#66d4a2', teal:'#2ad1c2', cyan:'#64cfff', blue:'#5a95ff', purple:'#b197fc', pink:'#ff87b7', grey:'#cfd4e1' };
+  const contrastOn = (hex)=>{ if(!hex) return '#e9eef9'; const c=parseInt(hex.slice(1),16); const r=(c>>16)&255,g=(c>>8)&255,b=c&255; const L=(0.2126*r+0.7152*g+0.0722*b)/255; return L>0.6?'#111':'#fff'; };
+  const optionsHtml = Object.entries(COLORS).map(([name,hex])=>{ const label=name? name[0].toUpperCase()+name.slice(1) : 'None'; const style = hex? `style="background:${hex};color:${contrastOn(hex)}"` : ''; return `<option value="${hex}" ${style}>${name? '■ ' : ''}${label}</option>`; }).join('');
+
+  tones.forEach(t=>{
+    const lab = chordIntervalLabel(base, t.idx, state.chordTones);
+    const name = chooseSpelling(t.idx);
+    const wrap = document.createElement('div'); wrap.className='swatch'; wrap.innerHTML = `<div class="name">${name}</div><div class="interval">${lab}</div>`;
+    const sel = document.createElement('select'); sel.className='color-select'; sel.innerHTML=optionsHtml; const current=state.chordIntervalColorMap[lab]||''; sel.value=current||'';
+    if(current){ sel.style.setProperty('--sel-color', current); sel.setAttribute('data-color','1'); }
+    sel.addEventListener('change',(e)=>{ const val=e.target.value||null; state.chordIntervalColorMap[lab]=val; setDefaultPalette(); if(state.chordTones){ applyChordHighlight(state.chordTones); } else { renderEverything(); } renderScaleEverything(); renderCustomCircle(); renderChordSwatches(); });
+    sel.addEventListener('pointerdown',(ev)=>{ if(ev.shiftKey){ state.chordIntervalColorMap[lab]=null; sel.value=''; sel.style.removeProperty('--sel-color'); sel.removeAttribute('data-color'); setDefaultPalette(); if(state.chordTones){ applyChordHighlight(state.chordTones); } else { renderEverything(); } renderScaleEverything(); renderCustomCircle(); renderChordSwatches(); }});
+    wrap.appendChild(sel);
+    const row = document.createElement('div'); row.className='row'; row.style.marginTop = '6px';
+    const cb = document.createElement('input'); cb.type='checkbox'; cb.className='pulse-check'; cb.checked = !!(state.chordPulseIntervals && state.chordPulseIntervals[lab]);
+    const lb = document.createElement('label'); lb.textContent='Pulse'; lb.style.margin='0'; lb.style.opacity='.9';
+    cb.addEventListener('change', ()=>{ if(!state.chordPulseIntervals) state.chordPulseIntervals={}; state.chordPulseIntervals[lab] = !!cb.checked; renderBoardFret(); renderBoardScale(); renderCustomCircle(); });
+    row.appendChild(cb); row.appendChild(lb); wrap.appendChild(row);
+    sw.appendChild(wrap);
+  });
+}
 
 // ========== CONTROLS & EVENTS ==========
 function buildPresetList(){
@@ -974,7 +1154,7 @@ function updateTransposeUI(){ el('tVal').textContent = String(state.transpose); 
 function syncKeyScaleToTab1(){ el('key').value = state.key; el('scale').value = state.scaleName; }
 function syncKeyScaleToTab2(){ el('key2').value = state.key; el('scale2').value = state.scaleName; }
 function syncKeyScaleToTab3(){ const k3=el('key3'); if(k3) k3.value = state.key; }
-function renderEverything(){ renderBoardFret(); renderChordChips(); renderSwatches(); updateTransposeUI(); }
+function renderEverything(){ renderBoardFret(); renderChordChips(); renderSwatches(); renderChordSwatches(); updateTransposeUI(); }
 
 function renderControls(){
   // populate keys & scales
@@ -1006,7 +1186,7 @@ function bindEvents(){
   el('key').addEventListener('change', (e)=>{ state.key=e.target.value; state.highlightSet=null; state.chordRootIdx=null; setDefaultPalette(); syncKeyScaleToTab2(); syncKeyScaleToTab3(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
   el('scale').addEventListener('change', (e)=>{ state.scaleName=e.target.value; state.highlightSet=null; state.chordRootIdx=null; setDefaultPalette(); syncKeyScaleToTab2(); renderEverything(); renderScaleEverything(); });
   el('displayMode').addEventListener('click', ()=>{ state.showIntervals=!state.showIntervals; el('displayMode').textContent = state.showIntervals ? 'Show Note Names' : 'Show Intervals'; renderBoardFret(); renderBoardScale(); renderCustomCircle(); });
-  el('clearHighlight').addEventListener('click', ()=>{ state.highlightSet=null; state.chordRootIdx=null; setDefaultPalette(); renderEverything(); });
+  el('clearHighlight').addEventListener('click', ()=>{ state.highlightSet=null; state.chordRootIdx=null; state.chordTones=null; setDefaultPalette(); renderEverything(); });
   // Scale explorer
   el('key2').addEventListener('change', (e)=>{ state.key=e.target.value; setDefaultPalette(); syncKeyScaleToTab1(); syncKeyScaleToTab3(); renderEverything(); renderScaleEverything(); renderChordEverything(); });
   el('scale2').addEventListener('change', (e)=>{ state.scaleName=e.target.value; setDefaultPalette(); syncKeyScaleToTab1(); renderEverything(); renderScaleEverything(); });
